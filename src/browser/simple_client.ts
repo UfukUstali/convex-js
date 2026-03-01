@@ -8,9 +8,12 @@ import {
   UserIdentityAttributes,
 } from "./index.js";
 import {
+  BetterOmit,
+  Expand,
   FunctionArgs,
   FunctionReference,
   FunctionReturnType,
+  PaginationOptions,
   PaginationResult,
 } from "../server/index.js";
 import { getFunctionName } from "../server/api.js";
@@ -22,6 +25,7 @@ import {
 } from "./sync/paginated_query_client.js";
 import { PaginatedQueryResult } from "./sync/pagination.js";
 import { serializedQueryTokenIsPaginated } from "./sync/udf_path_utils.js";
+import { Value } from "../values/value.js";
 
 // In Node.js builds this points to a bundled WebSocket implementation. If no
 // WebSocket implementation is manually specified or globally available,
@@ -32,6 +36,17 @@ let defaultWebSocketConstructor: typeof WebSocket | undefined;
 export function setDefaultWebSocketConstructor(ws: typeof WebSocket) {
   defaultWebSocketConstructor = ws;
 }
+
+type PaginatedQueryReference = FunctionReference<
+  "query",
+  "public",
+  { paginationOpts: PaginationOptions },
+  PaginationResult<any>
+>;
+
+type PaginatedQueryArgs<Query extends PaginatedQueryReference> = Expand<
+  BetterOmit<FunctionArgs<Query>, "paginationOpts">
+>;
 
 export type ConvexClientOptions = BaseConvexClientOptions & {
   /**
@@ -260,13 +275,15 @@ export class ConvexClient {
    *
    * @return an {@link Unsubscribe} function to stop calling the callback.
    */
-  onPaginatedUpdate_experimental<Query extends FunctionReference<"query">>(
+  onPaginatedUpdate_experimental<Query extends PaginatedQueryReference>(
     query: Query,
-    args: FunctionArgs<Query>,
+    args: PaginatedQueryArgs<Query>,
     options: { initialNumItems: number },
-    callback: (result: PaginationResult<FunctionReturnType<Query>>) => unknown,
+    callback: (
+      result: PaginatedQueryResult<FunctionReturnType<Query>>
+    ) => unknown,
     onError?: (e: Error) => unknown,
-  ): Unsubscribe<PaginatedQueryResult<FunctionReturnType<Query>[]>> {
+  ): Unsubscribe<PaginatedQueryResult<FunctionReturnType<Query>>> {
     if (this.disabled) {
       return this.createDisabledUnsubscribe<
         PaginatedQueryResult<FunctionReturnType<Query>>
@@ -275,13 +292,12 @@ export class ConvexClient {
 
     const paginationOptions = {
       initialNumItems: options.initialNumItems,
-      id: -1,
+      id: nextPaginationId(),
     };
 
     const { paginatedQueryToken, unsubscribe } = this.paginatedClient.subscribe(
       getFunctionName(query),
-      args,
-      // Simple client doesn't use IDs, there's no expectation that these queries remain separate.
+      args as Record<string, Value>,
       paginationOptions,
     );
 
@@ -311,7 +327,7 @@ export class ConvexClient {
     }
 
     const unsubscribeProps: RemoveCallSignature<
-      Unsubscribe<PaginatedQueryResult<FunctionReturnType<Query>[]>>
+      Unsubscribe<PaginatedQueryResult<FunctionReturnType<Query>>>
     > = {
       unsubscribe: () => {
         if (this.closed) {
@@ -322,11 +338,7 @@ export class ConvexClient {
         unsubscribe();
       },
       getCurrentValue: () => {
-        const result = this.paginatedClient.localQueryResult(
-          getFunctionName(query),
-          args,
-          paginationOptions,
-        );
+        const result = this.paginatedClient.localQueryResultByToken(paginatedQueryToken);
         // cast to apply the specific function type
         return result as
           | PaginatedQueryResult<FunctionReturnType<Query>>
@@ -571,6 +583,13 @@ export class ConvexClient {
     if (this.disabled) return () => {};
     return this.client.subscribeToConnectionState(cb);
   }
+}
+
+let paginationId = 0;
+
+function nextPaginationId(): number {
+  paginationId++;
+  return paginationId;
 }
 
 // internal information tracked about each registered callback

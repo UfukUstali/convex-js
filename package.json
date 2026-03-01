@@ -190,7 +190,7 @@
     "lint": "eslint . --cache",
     "format": "prettier -w . '!CHANGELOG.md' && eslint --fix .",
     "format-check": "prettier -c . '!CHANGELOG.md' && eslint . --cache",
-    "prepare": "npm run build",
+    "prepare": "echo 'The prepare script is explicitly disabled in this soft fork if you insist on using it, run `[p]npm run build` yourself.'",
     "prepublishOnly": "node scripts/version-check.mjs",
     "prepack": "node scripts/prepack.mjs",
     "postpack": "node scripts/postpack.mjs",
